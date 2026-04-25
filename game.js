@@ -1,302 +1,213 @@
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js";
+import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/controls/OrbitControls.js";
+
 const canvas = document.querySelector("#game");
 const statusText = document.querySelector("#status");
-const ctx = canvas.getContext("2d");
 
-const keys = new Set();
-window.addEventListener("keydown", (e) => keys.add(e.code));
-window.addEventListener("keyup", (e) => keys.delete(e.code));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b1320);
+scene.fog = new THREE.Fog(0x0b1320, 18, 70);
 
-const camera = {
-  yaw: 0.35,
-  pitch: -0.35,
-  distance: 15,
-  height: 7,
-  fov: 700,
-};
+const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(-3, 7, 15);
 
-let dragging = false;
-let lastMouseX = 0;
-let lastMouseY = 0;
-canvas.addEventListener("mousedown", (e) => {
-  dragging = true;
-  lastMouseX = e.clientX;
-  lastMouseY = e.clientY;
-});
-window.addEventListener("mouseup", () => (dragging = false));
-window.addEventListener("mousemove", (e) => {
-  if (!dragging) return;
-  const dx = e.clientX - lastMouseX;
-  const dy = e.clientY - lastMouseY;
-  lastMouseX = e.clientX;
-  lastMouseY = e.clientY;
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  camera.yaw -= dx * 0.004;
-  camera.pitch = Math.max(-1.15, Math.min(-0.08, camera.pitch - dy * 0.003));
-});
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, 2, 0);
+controls.maxPolarAngle = Math.PI * 0.48;
 
-const platforms = [
-  { x: 0, y: -0.5, z: 0, w: 12, h: 1, d: 12, color: "#4f9af5" },
-  { x: 8, y: 0.5, z: -1, w: 4, h: 1, d: 4, color: "#426296" },
-  { x: 13.5, y: 2.5, z: 2, w: 3.5, h: 1, d: 3.5, color: "#426296" },
-  { x: 19.5, y: 5, z: -1, w: 3.2, h: 1, d: 3.2, color: "#426296" },
-  { x: 25.5, y: 7.8, z: 2.5, w: 2.8, h: 1, d: 2.8, color: "#426296" },
-  { x: 32, y: 10.8, z: -1.5, w: 3.2, h: 1, d: 3.2, color: "#426296" },
-  { x: 38.5, y: 13.3, z: 2, w: 4.8, h: 0.6, d: 4.8, color: "#89ff9d", finish: true },
-];
+const hemi = new THREE.HemisphereLight(0x9ec9ff, 0x334455, 0.55);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xffffff, 0.95);
+sun.position.set(6, 12, 4);
+sun.castShadow = true;
+sun.shadow.camera.left = -25;
+sun.shadow.camera.right = 25;
+sun.shadow.camera.top = 25;
+sun.shadow.camera.bottom = -25;
+scene.add(sun);
+
+const platformMat = new THREE.MeshStandardMaterial({ color: 0x426296, roughness: 0.45, metalness: 0.1 });
+const safeMat = new THREE.MeshStandardMaterial({ color: 0x4f9af5, roughness: 0.35, metalness: 0.2 });
+const finishMat = new THREE.MeshStandardMaterial({ color: 0x89ff9d, emissive: 0x285029, roughness: 0.25 });
+
+function makePlatform(width, height, depth, x, y, z, material = platformMat) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
+  mesh.position.set(x, y, z);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  return mesh;
+}
+
+const platforms = [];
+platforms.push(makePlatform(12, 1, 12, 0, -0.5, 0, safeMat));
+platforms.push(makePlatform(4, 1, 4, 8, 0.5, -1));
+platforms.push(makePlatform(3.5, 1, 3.5, 13.5, 2.5, 2));
+platforms.push(makePlatform(3.2, 1, 3.2, 19.5, 5, -1));
+platforms.push(makePlatform(2.8, 1, 2.8, 25.5, 7.8, 2.5));
+platforms.push(makePlatform(3.2, 1, 3.2, 32, 10.8, -1.5));
+
+const finishPad = makePlatform(4.8, 0.6, 4.8, 38.5, 13.3, 2, finishMat);
+platforms.push(finishPad);
+
+const railGeom = new THREE.CylinderGeometry(0.12, 0.12, 6.4, 16);
+const railMat = new THREE.MeshStandardMaterial({ color: 0x8fa2bf, roughness: 0.2, metalness: 0.8 });
+const rail = new THREE.Mesh(railGeom, railMat);
+rail.rotation.z = Math.PI * 0.35;
+rail.position.set(16.4, 5.4, 6.2);
+rail.castShadow = true;
+scene.add(rail);
 
 const player = {
-  x: 0,
-  y: 1.6,
-  z: 0,
-  vx: 0,
-  vy: 0,
-  vz: 0,
   radius: 0.55,
+  position: new THREE.Vector3(0, 1.6, 0),
+  velocity: new THREE.Vector3(),
   onGround: false,
 };
 
-let won = false;
+const playerMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(player.radius, 26, 20),
+  new THREE.MeshStandardMaterial({ color: 0xffb86c, roughness: 0.4, metalness: 0.15 })
+);
+playerMesh.castShadow = true;
+scene.add(playerMesh);
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener("resize", resize);
-resize();
+const goalGlow = new THREE.PointLight(0x7eff99, 2.2, 18, 2);
+goalGlow.position.copy(finishPad.position).add(new THREE.Vector3(0, 3.8, 0));
+scene.add(goalGlow);
 
-function worldToCamera(p, target) {
-  const yaw = camera.yaw;
-  const pitch = camera.pitch;
-  const cp = Math.cos(pitch);
-  const sp = Math.sin(pitch);
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(120, 24, 16),
+  new THREE.MeshBasicMaterial({ color: 0x102238, side: THREE.BackSide })
+);
+scene.add(sky);
 
-  const camX = target.x + Math.sin(yaw) * camera.distance;
-  const camY = target.y + camera.height;
-  const camZ = target.z + Math.cos(yaw) * camera.distance;
+const keys = new Set();
+window.addEventListener("keydown", (event) => keys.add(event.code));
+window.addEventListener("keyup", (event) => keys.delete(event.code));
 
-  let x = p.x - camX;
-  let y = p.y - camY;
-  let z = p.z - camZ;
-
-  const cosy = Math.cos(-yaw);
-  const siny = Math.sin(-yaw);
-  const rx = x * cosy - z * siny;
-  const rz = x * siny + z * cosy;
-  x = rx;
-  z = rz;
-
-  const ry = y * cp - z * sp;
-  const rz2 = y * sp + z * cp;
-
-  return { x, y: ry, z: rz2 };
+function getMoveInput() {
+  const move = new THREE.Vector2();
+  if (keys.has("KeyW") || keys.has("ArrowUp")) move.y += 1;
+  if (keys.has("KeyS") || keys.has("ArrowDown")) move.y -= 1;
+  if (keys.has("KeyA") || keys.has("ArrowLeft")) move.x -= 1;
+  if (keys.has("KeyD") || keys.has("ArrowRight")) move.x += 1;
+  if (move.lengthSq() > 1) move.normalize();
+  return move;
 }
 
-function project(p) {
-  if (p.z >= -0.1) return null;
-  const scale = camera.fov / -p.z;
-  return {
-    x: canvas.width * 0.5 + p.x * scale,
-    y: canvas.height * 0.5 - p.y * scale,
-    scale,
-  };
-}
+function resolvePlatformCollision(platform) {
+  const half = new THREE.Vector3(platform.scale.x, platform.scale.y, platform.scale.z);
+  const geom = platform.geometry.parameters;
+  half.set(geom.width * 0.5, geom.height * 0.5, geom.depth * 0.5);
 
-function drawPlatform(pf) {
-  const hw = pf.w * 0.5;
-  const hh = pf.h * 0.5;
-  const hd = pf.d * 0.5;
+  const min = platform.position.clone().sub(half);
+  const max = platform.position.clone().add(half);
 
-  const corners = [
-    { x: pf.x - hw, y: pf.y + hh, z: pf.z - hd },
-    { x: pf.x + hw, y: pf.y + hh, z: pf.z - hd },
-    { x: pf.x + hw, y: pf.y + hh, z: pf.z + hd },
-    { x: pf.x - hw, y: pf.y + hh, z: pf.z + hd },
-    { x: pf.x - hw, y: pf.y - hh, z: pf.z - hd },
-    { x: pf.x + hw, y: pf.y - hh, z: pf.z - hd },
-    { x: pf.x + hw, y: pf.y - hh, z: pf.z + hd },
-    { x: pf.x - hw, y: pf.y - hh, z: pf.z + hd },
-  ];
+  if (
+    player.position.x + player.radius > min.x &&
+    player.position.x - player.radius < max.x &&
+    player.position.z + player.radius > min.z &&
+    player.position.z - player.radius < max.z
+  ) {
+    const top = max.y;
+    const feet = player.position.y - player.radius;
+    const nearTop = feet <= top + 0.25 && feet >= top - 2.4;
 
-  const cam = corners.map((c) => worldToCamera(c, player));
-  const pts = cam.map((c) => project(c));
-  if (pts.some((x) => x == null)) return;
-
-  const faces = [
-    { idx: [0, 1, 2, 3], shade: 1 },
-    { idx: [3, 2, 6, 7], shade: 0.82 },
-    { idx: [1, 2, 6, 5], shade: 0.72 },
-  ];
-
-  for (const face of faces) {
-    const depth = face.idx.reduce((s, i) => s + cam[i].z, 0) / face.idx.length;
-    face.depth = depth;
-  }
-  faces.sort((a, b) => a.depth - b.depth);
-
-  for (const face of faces) {
-    ctx.beginPath();
-    face.idx.forEach((i, k) => {
-      const pt = pts[i];
-      if (k === 0) ctx.moveTo(pt.x, pt.y);
-      else ctx.lineTo(pt.x, pt.y);
-    });
-    ctx.closePath();
-
-    const rgb = hexToRgb(pf.color);
-    ctx.fillStyle = `rgb(${Math.floor(rgb.r * face.shade)}, ${Math.floor(rgb.g * face.shade)}, ${Math.floor(rgb.b * face.shade)})`;
-    ctx.fill();
-    ctx.strokeStyle = "rgba(10,18,32,0.55)";
-    ctx.stroke();
-  }
-
-  if (pf.finish) {
-    const glow = project(worldToCamera({ x: pf.x, y: pf.y + 1.9, z: pf.z }, player));
-    if (glow) {
-      const radius = Math.max(6, 22 * glow.scale * 0.04);
-      const grad = ctx.createRadialGradient(glow.x, glow.y, 0, glow.x, glow.y, radius);
-      grad.addColorStop(0, "rgba(126, 255, 153, 0.8)");
-      grad.addColorStop(1, "rgba(126, 255, 153, 0)");
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(glow.x, glow.y, radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-}
-
-function hexToRgb(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
-}
-
-function resolvePlatformCollision(pf) {
-  const minX = pf.x - pf.w * 0.5;
-  const maxX = pf.x + pf.w * 0.5;
-  const minZ = pf.z - pf.d * 0.5;
-  const maxZ = pf.z + pf.d * 0.5;
-
-  if (player.x + player.radius > minX && player.x - player.radius < maxX && player.z + player.radius > minZ && player.z - player.radius < maxZ) {
-    const top = pf.y + pf.h * 0.5;
-    const feet = player.y - player.radius;
-    const nearTop = feet <= top + 0.22 && feet >= top - 2.2;
-    if (player.vy <= 0 && nearTop) {
-      player.y = top + player.radius;
-      player.vy = 0;
+    if (player.velocity.y <= 0 && nearTop) {
+      player.position.y = top + player.radius;
+      player.velocity.y = 0;
       player.onGround = true;
     }
   }
 }
 
-function updatePhysics(dt) {
-  const moveX = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
-  const moveY = (keys.has("KeyW") || keys.has("ArrowUp") ? 1 : 0) - (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0);
+const clock = new THREE.Clock();
+let won = false;
 
-  const moveLen = Math.hypot(moveX, moveY) || 1;
-  const mx = moveX / moveLen;
-  const mz = moveY / moveLen;
+function update() {
+  const dt = Math.min(clock.getDelta(), 0.033);
+  const move = getMoveInput();
 
-  const fwdX = -Math.sin(camera.yaw);
-  const fwdZ = -Math.cos(camera.yaw);
-  const rightX = Math.cos(camera.yaw);
-  const rightZ = -Math.sin(camera.yaw);
-
-  const wishX = rightX * mx + fwdX * mz;
-  const wishZ = rightZ * mx + fwdZ * mz;
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0;
+  forward.normalize();
+  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
   const sprint = keys.has("ShiftLeft") || keys.has("ShiftRight");
   const accel = sprint ? 34 : 24;
   const maxSpeed = sprint ? 10.5 : 7.2;
-  const friction = player.onGround ? 10 : 2.6;
+  const friction = player.onGround ? 10 : 2.5;
 
-  player.vx += wishX * accel * dt;
-  player.vz += wishZ * accel * dt;
+  const desired = new THREE.Vector3();
+  desired.addScaledVector(forward, move.y);
+  desired.addScaledVector(right, move.x);
+  if (desired.lengthSq() > 1) desired.normalize();
 
-  const speed = Math.hypot(player.vx, player.vz);
+  player.velocity.x += desired.x * accel * dt;
+  player.velocity.z += desired.z * accel * dt;
+
+  const horizontal = new THREE.Vector2(player.velocity.x, player.velocity.z);
+  const speed = horizontal.length();
   if (speed > maxSpeed) {
-    const s = maxSpeed / speed;
-    player.vx *= s;
-    player.vz *= s;
+    horizontal.setLength(maxSpeed);
+    player.velocity.x = horizontal.x;
+    player.velocity.z = horizontal.y;
   }
 
-  player.vx *= Math.exp(-friction * dt);
-  player.vz *= Math.exp(-friction * dt);
+  player.velocity.x *= Math.exp(-friction * dt);
+  player.velocity.z *= Math.exp(-friction * dt);
 
-  if (keys.has("Space") && player.onGround) {
-    player.vy = sprint ? 9.8 : 8.9;
+  if ((keys.has("Space") || keys.has("KeyJ")) && player.onGround) {
+    player.velocity.y = sprint ? 9.8 : 8.9;
     player.onGround = false;
   }
 
-  player.vy -= 24 * dt;
-  player.x += player.vx * dt;
-  player.y += player.vy * dt;
-  player.z += player.vz * dt;
-
+  player.velocity.y -= 24 * dt;
+  player.position.addScaledVector(player.velocity, dt);
   player.onGround = false;
-  for (const pf of platforms) resolvePlatformCollision(pf);
 
-  const finish = platforms[platforms.length - 1];
-  const dx = player.x - finish.x;
-  const dy = player.y - finish.y;
-  const dz = player.z - finish.z;
+  for (const platform of platforms) {
+    resolvePlatformCollision(platform);
+  }
 
-  if (!won && Math.hypot(dx, dy, dz) < 2.4) {
+  if (player.position.y < -15) {
+    player.position.set(0, 1.6, 0);
+    player.velocity.set(0, 0, 0);
+    statusText.textContent = "You fell! Back to start.";
+    won = false;
+  }
+
+  if (!won && player.position.distanceTo(finishPad.position) < 2.4) {
     won = true;
     statusText.textContent = "🏁 You win! Nice run.";
   }
 
-  if (player.y < -15) {
-    player.x = 0;
-    player.y = 1.6;
-    player.z = 0;
-    player.vx = player.vy = player.vz = 0;
-    won = false;
-    statusText.textContent = "You fell! Back to start.";
-  }
+  playerMesh.position.copy(player.position);
+
+  const chaseOffset = new THREE.Vector3(-8, 6, 10);
+  chaseOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(forward.x, forward.z));
+  controls.target.lerp(player.position, 1 - Math.exp(-8 * dt));
+  camera.position.lerp(player.position.clone().add(chaseOffset), 1 - Math.exp(-2.2 * dt));
+
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(update);
 }
 
-function drawPlayer() {
-  const p = project(worldToCamera({ x: player.x, y: player.y, z: player.z }, player));
-  if (!p) return;
-  const r = Math.max(5, player.radius * p.scale);
-  ctx.fillStyle = "#ffb86c";
-  ctx.beginPath();
-  ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-  ctx.fill();
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
 
-  ctx.strokeStyle = "rgba(0,0,0,0.25)";
-  ctx.stroke();
-}
-
-let prev = performance.now();
-function frame(now) {
-  const dt = Math.min((now - prev) / 1000, 0.033);
-  prev = now;
-
-  updatePhysics(dt);
-
-  ctx.fillStyle = "#0b1320";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  const horizon = canvas.height * (0.44 - camera.pitch * 0.1);
-  const grd = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  grd.addColorStop(0, "#102238");
-  grd.addColorStop(Math.max(0, Math.min(1, horizon / canvas.height)), "#152b46");
-  grd.addColorStop(1, "#0b1320");
-  ctx.fillStyle = grd;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  platforms
-    .slice()
-    .sort((a, b) => {
-      const da = worldToCamera({ x: a.x, y: a.y, z: a.z }, player).z;
-      const db = worldToCamera({ x: b.x, y: b.y, z: b.z }, player).z;
-      return da - db;
-    })
-    .forEach(drawPlatform);
-
-  drawPlayer();
-
-  requestAnimationFrame(frame);
-}
-
-requestAnimationFrame(frame);
+update();

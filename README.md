@@ -1,10 +1,10 @@
 # Simple 3D Parkour Game
 
-A small browser-based 3D parkour prototype using plain JavaScript + Canvas (no external dependencies).
+A small browser-based 3D parkour prototype built with Three.js.
 
 ## Run
 
-Serve it with a local static server:
+Because this uses ES modules, serve it with a local static server:
 
 ```bash
 python3 -m http.server 8000
